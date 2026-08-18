@@ -524,7 +524,7 @@ def handle_incoming_messages(message):
 
             if matched_df.empty:
                 names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
-                best_match = process_extractOne(nama_resmi, names_list, scorer=fuzz.token_sort_ratio, score_cutoff=80.0)
+                best_match = process.extractOne(nama_resmi, names_list, scorer=fuzz.token_sort_ratio, score_cutoff=80.0)
                 if best_match:
                     matched_df = df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
 
