@@ -63,17 +63,6 @@ def process_arvi_feedback(
     df_clean.to_excel(output_file, index=False)
     print(f"--> Sheet '{sheet_name}' berhasil diekstrak ke '{output_file}'!\n")
 
-
-def process_arvi_paysales(excel_path, sheet_name, output_file="PaySS_temp.xlsx"):
-    print(
-        f"--> Memproses sheet '{sheet_name}' dari '{excel_path}' ->"
-        f" '{output_file}'..."
-    )
-    df_clean = pd.read_excel(excel_path, sheet_name=sheet_name)
-    df_clean.to_excel(output_file, index=False)
-    print(f"--> Sheet '{sheet_name}' berhasil diekstrak ke '{output_file}'!\n")
-
-
 def copy_ml_file(src_path, dest_file="Hasil_Latihan_temp.xlsx"):
     print(
         f"--> Menyalin file Machine Learning dari '{src_path}' ->"
@@ -130,18 +119,6 @@ def run_preparation():
             print(f"--> File ARVIEWER tidak ditemukan pada path: {arvi_path}\n")
     else:
         print("--> Parameter 'arvi' atau 'arvi_name_out' tidak diisi.\n")
-
-    if arvi_path and arvi_pay_sales:
-        if os.path.exists(arvi_path):
-            process_arvi_paysales(
-                excel_path=arvi_path,
-                sheet_name=arvi_pay_sales,
-                output_file="PaySS_temp.xlsx",
-            )
-        else:
-            print(f"--> File ARVIEWER tidak ditemukan pada path: {arvi_path}\n")
-    else:
-        print("--> Parameter 'arvi' atau 'arvi_pay_sales' tidak diisi.\n")
 
     if ml_training_path:
         copy_ml_file(
