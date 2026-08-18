@@ -7,6 +7,7 @@ def jalankan_otomatisasi():
     folder_dapur = "Dapur"
 
     file_syarat = [
+        "0_DownloaderData.py",
         "1_CopyData.py",
         "2_AdjDateFormat.py",
         "3_ARBotTelegram.py",
@@ -31,7 +32,7 @@ def jalankan_otomatisasi():
 
     print("--> Semua file syarat ditemukan. Memulai proses...\n")
 
-    scripts_persiapan = ["1_CopyData.py", "2_AdjDateFormat.py"]
+    scripts_persiapan = ["0_DownloaderData.py", "1_CopyData.py", "2_AdjDateFormat.py"]
 
     try:
         for script in scripts_persiapan:
