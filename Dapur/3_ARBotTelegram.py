@@ -643,4 +643,4 @@ if __name__ == '__main__':
     refresher_thread.start()
 
     print("--> Bot Telegram Piutang AR Aktif & Berjalan...")
-    bot.infinity_polling()
+    bot.infinity_polling(timeout=90, long_polling_timeout=30)
