@@ -1,16 +1,18 @@
-import configparser
-from datetime import datetime
-import io
 import os
 import re
-import threading
+import io
 import time
+import threading
+import configparser
+from datetime import datetime
+from collections import defaultdict
+import pandas as pd
+import numpy as np
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+
 from rapidfuzz import fuzz, process
 import telebot
 from telebot import types
@@ -23,7 +25,6 @@ user_sessions = {}
 
 G_DATA = {
     'df_ar': None,
-    'pay_summary': {},
     'ml_dict': {},
     'ml_list': [],
     'fb_dict': {},
@@ -31,7 +32,7 @@ G_DATA = {
     'group_keywords': [],
     'branch_rules': {},
     'depo_config': "",
-    'show_pay_status': True,
+    'minifs_mapping': {},
     'last_updated': None
 }
 
@@ -86,6 +87,19 @@ def potong_teks(teks, max_char=35):
     s = str(teks).strip()
     return s[:max_char-3] + '...' if len(s) > max_char else s
 
+def format_tanggal_jt(teks):
+    if pd.isna(teks):
+        return ""
+    s = str(teks).strip()
+    if s.lower() in ['nan', 'none', 'nat', '']:
+        return ""
+    
+    if '&' in s:
+        parts = [p.strip() for p in s.split('&') if p.strip()]
+        return " &\n".join(parts)
+    
+    return s
+
 def standardize_code(code, depo_prefixes="SL|YY|MKS|MGL|PW|PWT|PLU|SG|SMG|TGL|PA|KDI"):
     if pd.isna(code):
         return "" 
@@ -124,6 +138,53 @@ def parse_date_sort(val):
             val_str = val_str.replace(indo, eng)
             break
     return pd.to_datetime(val_str, errors="coerce", format="mixed")
+
+def load_minifs_mapping(minifs_file='Minifs_temp.xlsx'):
+    code_to_all_codes = defaultdict(set)
+    if not os.path.exists(minifs_file):
+        return code_to_all_codes
+
+    try:
+        df_m = pd.read_excel(minifs_file)
+        df_m.columns = df_m.columns.str.strip()
+
+        col_min = [c for c in df_m.columns if 'min' in c.lower() and 'pelanggan' in c.lower()]
+        col_nopel = [c for c in df_m.columns if c.lower() == 'no. pelanggan' or c.lower() == 'kode pelanggan']
+
+        if col_min and col_nopel:
+            c_min = col_min[0]
+            c_nop = col_nopel[0]
+
+            def clean_c(v):
+                if pd.isna(v):
+                    return ""
+                if isinstance(v, (int, float)):
+                    return str(int(v))
+                s = str(v).strip()
+                if s.endswith('.0'):
+                    s = s[:-2]
+                return s.upper()
+
+            df_m['Min_Clean'] = df_m[c_min].apply(clean_c)
+            df_m['Nopel_Clean'] = df_m[c_nop].apply(clean_c)
+
+            min_to_group = defaultdict(set)
+            for _, r in df_m.iterrows():
+                m_val = r['Min_Clean']
+                n_val = r['Nopel_Clean']
+                if m_val:
+                    min_to_group[m_val].add(m_val)
+                if n_val:
+                    min_to_group[m_val].add(n_val)
+
+            for m_val, group_set in min_to_group.items():
+                for code_item in group_set:
+                    code_to_all_codes[code_item].update(group_set)
+
+    except Exception as e:
+        print(f"--> [WARNING MINIFS]: Gagal memuat Minifs_temp.xlsx: {e}")
+
+    return code_to_all_codes
 
 def load_ml_and_fback_datasets(config):
     ml_file = config.get('DIR', 'hasil_latihan', fallback='Hasil_Latihan_temp.xlsx')
@@ -206,81 +267,45 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
     cache_resolver[raw_clean] = res
     return res
 
-def load_payment_summary(pay_file):
-    pay_summary = {}
-    if os.path.exists(pay_file):
-        df_pay = pd.read_excel(pay_file, sheet_name=0, header=1)
-        df_pay.columns = df_pay.columns.str.strip()
-
-        col_nota = [c for c in df_pay.columns if 'nota' in c.lower() or 'invoice' in c.lower() or 'faktur' in c.lower()]
-        col_bayar = [c for c in df_pay.columns if 'bayar' in c.lower() or 'nominal' in c.lower()]
-
-        if col_nota and col_bayar:
-            c_n, c_b = col_nota[0], col_bayar[0]
-            for _, row in df_pay.dropna(subset=[c_n]).iterrows():
-                nota = str(row[c_n]).strip()
-                try:
-                    nominal = float(row[c_b])
-                except (ValueError, TypeError):
-                    nominal = 0.0
-
-                if nota not in pay_summary:
-                    pay_summary[nota] = {'total_bayar': 0.0, 'count': 0}
-                pay_summary[nota]['total_bayar'] += nominal
-                pay_summary[nota]['count'] += 1
-    return pay_summary
-
-def get_payment_status(no_faktur, nilai_faktur, pay_summary):
-    no_faktur_str = str(no_faktur).strip()
-    try:
-        nilai_faktur_val = float(nilai_faktur)
-    except (ValueError, TypeError):
-        nilai_faktur_val = 0.0
-
-    if no_faktur_str in pay_summary:
-        total_bayar = pay_summary[no_faktur_str]['total_bayar']
-        jml_data = pay_summary[no_faktur_str]['count']
-
-        if total_bayar == nilai_faktur_val:
-            return f"LUNAS (Total {jml_data}x bayar)", "blue"
-        elif total_bayar < nilai_faktur_val:
-            kurang = nilai_faktur_val - total_bayar
-            return f"DICICIL: Baru Bayar {total_bayar:,.0f} (Kurang: {kurang:,.0f})".replace(",", "."), "orange"
-        else:
-            return f"LEBIH BAYAR: Total {total_bayar:,.0f}".replace(",", "."), "magenta"
-    else:
-        return "Belum Ada Data", "black"
-
 def load_ar_dataset_from_disk(config):
     ar_file = config.get('DIR', 'ar_clean', fallback='ARClean_temp.xlsx')
-    pay_file = config.get('DIR', 'pay_ss', fallback='PaySS_temp.xlsx')
     depo_config = config.get('MAP', 'depo', fallback='SL|YY|MKS|MGL|PW|PWT|PLU|SG|SMG|TGL|PA|KDI').strip()
-    show_pay_str = config.get('DISPLAY', 'show_pay_status', fallback='Ya').strip().lower()
-    show_pay_status = show_pay_str in ['ya', 'yes', '1', 'true']
 
     df_ar = read_excel_auto_header(ar_file, sheet_name=0, target_column="Nama Pelanggan")
 
+    def clean_raw_code(val):
+        if pd.isna(val):
+            return ""
+        if isinstance(val, (int, float)):
+            return str(int(val))
+        s = str(val).strip()
+        if s.endswith('.0'):
+            s = s[:-2]
+        return s.upper()
+
     if 'No. Pelanggan' in df_ar.columns:
+        df_ar['Raw_Kode'] = df_ar['No. Pelanggan'].apply(clean_raw_code)
         df_ar['Clean_Kode'] = df_ar['No. Pelanggan'].apply(lambda x: standardize_code(x, depo_config))
     elif 'Kode Pelanggan' in df_ar.columns:
+        df_ar['Raw_Kode'] = df_ar['Kode Pelanggan'].apply(clean_raw_code)
         df_ar['Clean_Kode'] = df_ar['Kode Pelanggan'].apply(lambda x: standardize_code(x, depo_config))
     else:
+        df_ar['Raw_Kode'] = ""
         df_ar['Clean_Kode'] = ""
 
-    pay_summary = load_payment_summary(pay_file)
     ml_dict, ml_list, fb_dict, fb_list = load_ml_and_fback_datasets(config)
     group_keywords, branch_rules = get_custom_rules(config)
+    minifs_mapping = load_minifs_mapping()
 
-    return df_ar, pay_summary, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, show_pay_status
+    return df_ar, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, minifs_mapping
 
 def background_data_refresher(config):
     while True:
         try:
-            df_ar, pay_summary, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, show_pay_status = load_ar_dataset_from_disk(config)
+            df_ar, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, minifs_mapping = load_ar_dataset_from_disk(config)
             
             with data_lock:
                 G_DATA['df_ar'] = df_ar
-                G_DATA['pay_summary'] = pay_summary
                 G_DATA['ml_dict'] = ml_dict
                 G_DATA['ml_list'] = ml_list
                 G_DATA['fb_dict'] = fb_dict
@@ -288,7 +313,7 @@ def background_data_refresher(config):
                 G_DATA['group_keywords'] = group_keywords
                 G_DATA['branch_rules'] = branch_rules
                 G_DATA['depo_config'] = depo_config
-                G_DATA['show_pay_status'] = show_pay_status
+                G_DATA['minifs_mapping'] = minifs_mapping
                 G_DATA['last_updated'] = datetime.now()
 
             print(f"--> [{datetime.now().strftime('%H:%M:%S')}] RAM Data Caching Sukses Diperbarui!")
@@ -298,7 +323,7 @@ def background_data_refresher(config):
         interval_minutes = int(config.get('AR', 'ar_time_interval', fallback=10))
         time.sleep(interval_minutes * 60)
 
-def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status=True):
+def generate_ar_image(df_filtered, filter_jt=False):
     df = df_filtered.copy()
 
     if 'No. Faktur' in df.columns:
@@ -316,28 +341,15 @@ def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status
     if df.empty:
         return None
 
-    status_list, color_list = [], []
-    for _, r in df.iterrows():
-        st, col = get_payment_status(r.get('No. Faktur', ''), r.get('Nilai Faktur', 0), pay_summary)
-        status_list.append(st)
-        color_list.append(col)
+    if 'Tanggal JT' not in df.columns and 'Jatuh Tempo' in df.columns:
+        df['Tanggal JT'] = df['Jatuh Tempo']
 
-    df['Cek Pelunasan SS Sales'] = status_list
-
-    if show_pay_status:
-        cols_to_show = [
-            'No. Faktur', 'Tgl Faktur', 'Jatuh Tempo', 'Nilai Faktur', 
-            'Sisa Piutang', 'Umur JT', 'Nama Pelanggan', 'Nama Penjual', 
-            'Nama Kontak', 'Cek Pelunasan SS Sales'
-        ]
-        col_widths = [0.08, 0.07, 0.07, 0.08, 0.08, 0.06, 0.16, 0.09, 0.18, 0.13]
-    else:
-        cols_to_show = [
-            'No. Faktur', 'Tgl Faktur', 'Jatuh Tempo', 'Nilai Faktur', 
-            'Sisa Piutang', 'Umur JT', 'Nama Pelanggan', 'Nama Penjual', 
-            'Nama Kontak'
-        ]
-        col_widths = [0.09, 0.08, 0.08, 0.09, 0.09, 0.06, 0.20, 0.10, 0.21]
+    cols_to_show = [
+        'No. Faktur', 'Tgl Faktur', 'Jatuh Tempo', 'Nilai Faktur', 
+        'Sisa Piutang', 'Umur JT', 'Nama Pelanggan', 'Nama Penjual', 
+        'Nama Kontak', 'Tanggal JT'
+    ]
+    col_widths = [0.075, 0.065, 0.075, 0.08, 0.08, 0.055, 0.14, 0.08, 0.17, 0.18]
 
     valid_cols = [c for c in cols_to_show if c in df.columns]
     df_display = df[valid_cols].copy()
@@ -349,13 +361,15 @@ def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status
     if 'Nama Penjual' in df_display.columns:
         df_display['Nama Penjual'] = df_display['Nama Penjual'].apply(lambda x: potong_teks(x, max_char=16))
 
+    if 'Tanggal JT' in df_display.columns:
+        df_display['Tanggal JT'] = df_display['Tanggal JT'].apply(format_tanggal_jt)
+
     for col in ['Nilai Faktur', 'Sisa Piutang']:
         if col in df_display.columns:
             df_display[col] = df_display[col].apply(lambda x: f"{x:,.0f}".replace(",", ".") if pd.notna(x) else "0")
 
     months = [parse_date_sort(val) for val in df['Tgl Faktur']]
     final_rows = []
-    final_color_list = []
 
     for i in range(len(df_display)):
         if i > 0:
@@ -363,10 +377,8 @@ def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status
             curr_m = (months[i].year, months[i].month) if pd.notna(months[i]) else None
             if prev_m and curr_m and prev_m != curr_m:
                 final_rows.append([""] * len(valid_cols))
-                final_color_list.append("black")
 
         final_rows.append(df_display.iloc[i].tolist())
-        final_color_list.append(color_list[i])
 
     df_final_display = pd.DataFrame(final_rows, columns=valid_cols)
 
@@ -375,8 +387,8 @@ def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status
     total_jt = df[df['Umur_JT_Num'] > 0]['Sisa Piutang'].sum() if 'Sisa Piutang' in df.columns else 0
 
     num_rows = len(df_final_display)
-    width_inches = 18.0
-    height_inches = max(1.8, num_rows * 0.32 + 1.0)
+    width_inches = 22.0
+    height_inches = max(2.2, num_rows * 0.52 + 1.2)
     
     target_dpi = 220
     max_pixels_limit = 9000
@@ -400,10 +412,9 @@ def generate_ar_image(df_filtered, pay_summary, filter_jt=False, show_pay_status
     for (row_idx, col_idx), cell in table.get_celld().items():
         if row_idx == 0:
             cell.set_facecolor('#002060')
-            cell.set_text_props(color='white', weight='bold')
+            cell.set_text_props(color='white', weight='bold', verticalalignment='center')
         else:
-            if show_pay_status and df_final_display.columns[col_idx] == 'Cek Pelunasan SS Sales':
-                cell.set_text_props(color=final_color_list[row_idx - 1], weight='bold')
+            cell.set_text_props(verticalalignment='center')
 
     plt.figtext(0.5, 0.94, "PT PRIMA TUNGGAL MANDIRI", ha="center", va="bottom", fontsize=15, fontweight='bold', color='#002060')
 
@@ -431,7 +442,7 @@ def send_welcome(message):
     if not is_auth:
         bot.reply_to(message, "Akses Terkunci.\nMasukkan Sandi/Token Internal untuk mengaktifkan bot:")
     else:
-        bot.reply_to(message, "Bot AR Ready!\nMasukkan Nama Pelanggan, Kode Pelanggan, atau Kata Kunci Sales (Contoh: Wakid Kendal, 10000, YY-2223, 10000 & YY-2223).")
+        bot.reply_to(message, "Bot AR Ready!\nMasukkan Nama Pelanggan, Kode Pelanggan, atau Kata Kunci Sales (Contoh: Wakid Kendal, 7159, YY-2223, 10000 & YY-2223).")
 
 @bot.message_handler(func=lambda msg: True)
 def handle_incoming_messages(message):
@@ -453,7 +464,6 @@ def handle_incoming_messages(message):
 
     with data_lock:
         df_ar = G_DATA['df_ar']
-        pay_summary = G_DATA['pay_summary']
         ml_dict = G_DATA['ml_dict']
         ml_list = G_DATA['ml_list']
         fb_dict = G_DATA['fb_dict']
@@ -461,6 +471,7 @@ def handle_incoming_messages(message):
         group_keywords = G_DATA['group_keywords']
         branch_rules = G_DATA['branch_rules']
         depo_config = G_DATA['depo_config']
+        minifs_mapping = G_DATA['minifs_mapping']
 
     if df_ar is None:
         bot.reply_to(message, "Data sedang dimuat ke memori RAM, silakan coba beberapa detik lagi.")
@@ -471,9 +482,22 @@ def handle_incoming_messages(message):
 
     clean_q = query.lower().replace('nopel:', '').strip()
     raw_codes = [k.strip() for k in clean_q.split('&') if k.strip()]
-    std_codes = [standardize_code(k, depo_config) for k in raw_codes]
 
-    matched_df = df_ar[df_ar['Clean_Kode'].isin(std_codes)]
+    target_codes_set = set()
+    for r_code in raw_codes:
+        code_upper = r_code.upper()
+        std_c = standardize_code(r_code, depo_config)
+        target_codes_set.add(code_upper)
+        target_codes_set.add(std_c)
+
+        if code_upper in minifs_mapping:
+            target_codes_set.update(minifs_mapping[code_upper])
+        if std_c in minifs_mapping:
+            target_codes_set.update(minifs_mapping[std_c])
+
+    cond_raw = df_ar['Raw_Kode'].isin(target_codes_set)
+    cond_clean = df_ar['Clean_Kode'].isin(target_codes_set)
+    matched_df = df_ar[cond_raw | cond_clean]
 
     if matched_df.empty:
         nama_resmi = resolve_target_name_fast(query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules)
@@ -500,7 +524,7 @@ def handle_incoming_messages(message):
 
             if matched_df.empty:
                 names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
-                best_match = process.extractOne(nama_resmi, names_list, scorer=fuzz.token_sort_ratio, score_cutoff=80.0)
+                best_match = process_extractOne(nama_resmi, names_list, scorer=fuzz.token_sort_ratio, score_cutoff=80.0)
                 if best_match:
                     matched_df = df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
 
@@ -510,8 +534,7 @@ def handle_incoming_messages(message):
 
     with session_lock:
         user_sessions[user_id] = {
-            'data': matched_df,
-            'pay_summary': pay_summary
+            'data': matched_df
         }
 
     markup = types.InlineKeyboardMarkup(row_width=3)
@@ -573,9 +596,6 @@ def process_fraud_filter(call):
     prod = session.get('prod', 'ALL')
     is_jt = session.get('filter_jt', False)
 
-    with data_lock:
-        show_pay_status = G_DATA['show_pay_status']
-
     if prod != 'ALL':
         cond_k = df_data['Nama Kontak'].astype(str).str.contains(prod, case=False, na=False)
         cond_p = df_data['Nama Penjual'].astype(str).str.contains(prod, case=False, na=False)
@@ -586,7 +606,7 @@ def process_fraud_filter(call):
 
     bot.edit_message_text("Mengolah tabel dan meng-generate gambar laporan...", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-    img_buffer = generate_ar_image(df_data, session['pay_summary'], filter_jt=is_jt, show_pay_status=show_pay_status)
+    img_buffer = generate_ar_image(df_data, filter_jt=is_jt)
 
     if img_buffer:
         caption_msg = (
@@ -605,11 +625,10 @@ def process_fraud_filter(call):
 
 if __name__ == '__main__':
     print("--> Memulai Data RAM Preloader...")
-    df_ar, pay_summary, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, show_pay_status = load_ar_dataset_from_disk(config)
+    df_ar, ml_dict, ml_list, fb_dict, fb_list, group_keywords, branch_rules, depo_config, minifs_mapping = load_ar_dataset_from_disk(config)
     
     with data_lock:
         G_DATA['df_ar'] = df_ar
-        G_DATA['pay_summary'] = pay_summary
         G_DATA['ml_dict'] = ml_dict
         G_DATA['ml_list'] = ml_list
         G_DATA['fb_dict'] = fb_dict
@@ -617,7 +636,7 @@ if __name__ == '__main__':
         G_DATA['group_keywords'] = group_keywords
         G_DATA['branch_rules'] = branch_rules
         G_DATA['depo_config'] = depo_config
-        G_DATA['show_pay_status'] = show_pay_status
+        G_DATA['minifs_mapping'] = minifs_mapping
         G_DATA['last_updated'] = datetime.now()
 
     refresher_thread = threading.Thread(target=background_data_refresher, args=(config,), daemon=True)
