@@ -1,21 +1,21 @@
+import configparser
+import io
 import os
 import re
-import io
-import time
 import threading
-import configparser
-from datetime import datetime
+import time
 from collections import defaultdict
-import pandas as pd
-import numpy as np
+from datetime import datetime
 
 import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
+import numpy as np
+import pandas as pd
 from rapidfuzz import fuzz, process
 import telebot
 from telebot import types
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 session_lock = threading.Lock()
 data_lock = threading.Lock()
@@ -323,7 +323,7 @@ def background_data_refresher(config):
         interval_minutes = int(config.get('AR', 'ar_time_interval', fallback=10))
         time.sleep(interval_minutes * 60)
 
-def generate_ar_image(df_filtered, filter_jt=False):
+def generate_ar_image(df_filtered, filter_jt=False, is_depo=False):
     df = df_filtered.copy()
 
     if 'No. Faktur' in df.columns:
@@ -344,12 +344,27 @@ def generate_ar_image(df_filtered, filter_jt=False):
     if 'Tanggal JT' not in df.columns and 'Jatuh Tempo' in df.columns:
         df['Tanggal JT'] = df['Jatuh Tempo']
 
+    if is_depo:
+        now_date = datetime.now().date()
+        
+        def hitung_umur_piutang(tgl_val):
+            dt = parse_date_sort(tgl_val)
+            if pd.isna(dt):
+                return "0 Hari"
+            selisih = (now_date - dt.date()).days
+            return f"{selisih} Hari"
+
+        df['Umur Piutang'] = df['Tgl Faktur'].apply(hitung_umur_piutang)
+        col_umur_header = 'Umur Piutang'
+    else:
+        col_umur_header = 'Umur JT'
+
     cols_to_show = [
         'No. Faktur', 'Tgl Faktur', 'Jatuh Tempo', 'Nilai Faktur', 
-        'Sisa Piutang', 'Umur JT', 'Nama Pelanggan', 'Nama Penjual', 
+        'Sisa Piutang', col_umur_header, 'Nama Pelanggan', 'Nama Penjual', 
         'Nama Kontak', 'Tanggal JT'
     ]
-    col_widths = [0.075, 0.065, 0.075, 0.08, 0.08, 0.055, 0.14, 0.08, 0.17, 0.18]
+    col_widths = [0.075, 0.065, 0.075, 0.08, 0.08, 0.06, 0.135, 0.08, 0.17, 0.18]
 
     valid_cols = [c for c in cols_to_show if c in df.columns]
     df_display = df[valid_cols].copy()
@@ -537,14 +552,15 @@ def handle_incoming_messages(message):
             'data': matched_df
         }
 
-    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup = types.InlineKeyboardMarkup(row_width=4)
     markup.add(
         types.InlineKeyboardButton("IRC", callback_data="prod_IRC"),
         types.InlineKeyboardButton("ZN", callback_data="prod_ZN"),
+        types.InlineKeyboardButton("DEPO", callback_data="prod_DEPO"),
         types.InlineKeyboardButton("SEMUA", callback_data="prod_ALL")
     )
 
-    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/3: Pilih Filter Produk:", reply_markup=markup)
+    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/3: Pilih Filter Produk / Mode:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prod_'))
 def process_product_filter(call):
@@ -596,7 +612,7 @@ def process_fraud_filter(call):
     prod = session.get('prod', 'ALL')
     is_jt = session.get('filter_jt', False)
 
-    if prod != 'ALL':
+    if prod not in ['ALL', 'DEPO']:
         cond_k = df_data['Nama Kontak'].astype(str).str.contains(prod, case=False, na=False)
         cond_p = df_data['Nama Penjual'].astype(str).str.contains(prod, case=False, na=False)
         df_data = df_data[cond_k | cond_p]
@@ -606,7 +622,7 @@ def process_fraud_filter(call):
 
     bot.edit_message_text("Mengolah tabel dan meng-generate gambar laporan...", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
-    img_buffer = generate_ar_image(df_data, filter_jt=is_jt)
+    img_buffer = generate_ar_image(df_data, filter_jt=is_jt, is_depo=(prod == 'DEPO'))
 
     if img_buffer:
         caption_msg = (
