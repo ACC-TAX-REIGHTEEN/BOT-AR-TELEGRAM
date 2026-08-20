@@ -251,6 +251,9 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
 
     if ml_list:
         match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.WRatio, score_cutoff=75.0)
+        if not match_ml:
+            match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+            
         if match_ml:
             res = ml_dict[match_ml[0]]
             cache_resolver[raw_clean] = res
@@ -258,6 +261,9 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
 
     if fb_list:
         match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.WRatio, score_cutoff=80.0)
+        if not match_fb:
+            match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+            
         if match_fb:
             res = fb_dict[match_fb[0]]
             cache_resolver[raw_clean] = res
@@ -266,6 +272,59 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
     res = str(raw_key).strip()
     cache_resolver[raw_clean] = res
     return res
+
+def cari_data_pelanggan(df_ar, query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules):
+    query_clean = bersihkan_teks(query)
+    if not query_clean:
+        return pd.DataFrame()
+
+    pelanggan_clean = df_ar['Nama Pelanggan'].astype(str).apply(bersihkan_teks) if 'Nama Pelanggan' in df_ar.columns else pd.Series("", index=df_ar.index)
+    kontak_clean = df_ar['Nama Kontak'].astype(str).apply(bersihkan_teks) if 'Nama Kontak' in df_ar.columns else pd.Series("", index=df_ar.index)
+    penjual_clean = df_ar['Nama Penjual'].astype(str).apply(bersihkan_teks) if 'Nama Penjual' in df_ar.columns else pd.Series("", index=df_ar.index)
+
+    combined_text = pelanggan_clean + " " + kontak_clean + " " + penjual_clean
+
+    query_tokens = [t for t in query_clean.split() if len(t) > 0]
+    if query_tokens:
+        cond_all_tokens = pd.Series(True, index=df_ar.index)
+        for token in query_tokens:
+            cond_all_tokens = cond_all_tokens & combined_text.str.contains(re.escape(token), regex=True, na=False)
+        
+        matched = df_ar[cond_all_tokens]
+        if not matched.empty:
+            return matched
+
+    nama_resmi = resolve_target_name_fast(query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules)
+    resmi_clean = bersihkan_teks(nama_resmi)
+
+    if resmi_clean and resmi_clean != query_clean:
+        resmi_tokens = [t for t in resmi_clean.split() if len(t) > 0]
+        if resmi_tokens:
+            cond_resmi = pd.Series(True, index=df_ar.index)
+            for token in resmi_tokens:
+                cond_resmi = cond_resmi & combined_text.str.contains(re.escape(token), regex=True, na=False)
+            
+            matched = df_ar[cond_resmi]
+            if not matched.empty:
+                return matched
+
+    names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
+    
+    best_match = process.extractOne(query_clean, names_list, scorer=fuzz.WRatio, score_cutoff=80.0)
+    if not best_match:
+        best_match = process.extractOne(query_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+
+    if best_match:
+        return df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
+
+    if resmi_clean:
+        best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.WRatio, score_cutoff=80.0)
+        if not best_match_resmi:
+            best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+        if best_match_resmi:
+            return df_ar[df_ar['Nama Pelanggan'] == best_match_resmi[0]]
+
+    return pd.DataFrame()
 
 def load_ar_dataset_from_disk(config):
     ar_file = config.get('DIR', 'ar_clean', fallback='ARClean_temp.xlsx')
@@ -515,33 +574,16 @@ def handle_incoming_messages(message):
     matched_df = df_ar[cond_raw | cond_clean]
 
     if matched_df.empty:
-        nama_resmi = resolve_target_name_fast(query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules)
-        target_clean = bersihkan_teks(nama_resmi)
-
-        matched_group = None
-        for g_kw in group_keywords:
-            if g_kw in target_clean or g_kw in bersihkan_teks(query):
-                matched_group = g_kw
-                break
-
-        if matched_group:
-            cond_group = (
-                df_ar['Nama Pelanggan'].astype(str).apply(bersihkan_teks).str.contains(rf"\b{re.escape(matched_group)}\b", regex=True, na=False) |
-                df_ar['Nama Kontak'].astype(str).apply(bersihkan_teks).str.contains(rf"\b{re.escape(matched_group)}\b", regex=True, na=False)
-            )
-            matched_df = df_ar[cond_group]
-        else:
-            pelanggan_clean = df_ar['Nama Pelanggan'].astype(str).apply(bersihkan_teks) if 'Nama Pelanggan' in df_ar.columns else pd.Series("", index=df_ar.index)
-            kontak_clean = df_ar['Nama Kontak'].astype(str).apply(bersihkan_teks) if 'Nama Kontak' in df_ar.columns else pd.Series("", index=df_ar.index)
-
-            cond_exact = (pelanggan_clean == target_clean) | (kontak_clean == target_clean)
-            matched_df = df_ar[cond_exact]
-
-            if matched_df.empty:
-                names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
-                best_match = process.extractOne(nama_resmi, names_list, scorer=fuzz.token_sort_ratio, score_cutoff=80.0)
-                if best_match:
-                    matched_df = df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
+        matched_df = cari_data_pelanggan(
+            df_ar=df_ar,
+            query=query,
+            ml_dict=ml_dict,
+            ml_list=ml_list,
+            fb_dict=fb_dict,
+            fb_list=fb_list,
+            cache_resolver=cache_resolver,
+            branch_rules=branch_rules
+        )
 
     if matched_df.empty:
         bot.reply_to(message, f"Data piutang tidak ditemukan untuk kata kunci: '{query}'.")
@@ -659,4 +701,11 @@ if __name__ == '__main__':
     refresher_thread.start()
 
     print("--> Bot Telegram Piutang AR Aktif & Berjalan...")
-    bot.infinity_polling(timeout=90, long_polling_timeout=30)
+
+    while True:
+        try:
+            bot.infinity_polling(timeout=90, long_polling_timeout=30)
+        except Exception as err:
+            print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [KONEKSI TERPUTUS]: {err}")
+            print("--> Coba menghubungkan ulang ke server Telegram dalam 5 detik...")
+            time.sleep(5)
