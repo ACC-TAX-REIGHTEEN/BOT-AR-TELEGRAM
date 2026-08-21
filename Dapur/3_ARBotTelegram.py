@@ -57,6 +57,8 @@ config = load_config()
 SECRET_KEY = config.get('AUTH', 'secret_key').strip()
 BOT_TOKEN = config.get('BOT', 'bot_token').strip()
 
+COMPANY_NAME = config.get('GENERAL', 'gen_company_name', fallback='PT ABC').strip()
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
 def get_custom_rules(config):
@@ -490,7 +492,7 @@ def generate_ar_image(df_filtered, filter_jt=False, is_depo=False):
         else:
             cell.set_text_props(verticalalignment='center')
 
-    plt.figtext(0.5, 0.94, "PT PRIMA TUNGGAL MANDIRI", ha="center", va="bottom", fontsize=15, fontweight='bold', color='#002060')
+    plt.figtext(0.5, 0.94, COMPANY_NAME, ha="center", va="bottom", fontsize=15, fontweight='bold', color='#002060')
 
     summary_title = f"Total Nilai Faktur: Rp {total_nilai:,.0f}  |  Total Sisa Piutang: Rp {total_sisa:,.0f}".replace(",", ".")
     if not filter_jt:
