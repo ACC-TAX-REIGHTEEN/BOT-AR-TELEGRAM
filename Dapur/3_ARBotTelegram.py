@@ -252,9 +252,9 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
         return res
 
     if ml_list:
-        match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.WRatio, score_cutoff=75.0)
+        match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.WRatio, score_cutoff=82.0)
         if not match_ml:
-            match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+            match_ml = process.extractOne(query=raw_clean, choices=ml_list, scorer=fuzz.token_set_ratio, score_cutoff=82.0)
             
         if match_ml:
             res = ml_dict[match_ml[0]]
@@ -262,9 +262,9 @@ def resolve_target_name_fast(raw_key, ml_dict, ml_list, fb_dict, fb_list, cache_
             return res
 
     if fb_list:
-        match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.WRatio, score_cutoff=80.0)
+        match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.WRatio, score_cutoff=85.0)
         if not match_fb:
-            match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+            match_fb = process.extractOne(query=raw_clean, choices=list(fb_dict.keys()), scorer=fuzz.token_set_ratio, score_cutoff=82.0)
             
         if match_fb:
             res = fb_dict[match_fb[0]]
@@ -286,45 +286,50 @@ def cari_data_pelanggan(df_ar, query, ml_dict, ml_list, fb_dict, fb_list, cache_
 
     combined_text = pelanggan_clean + " " + kontak_clean + " " + penjual_clean
 
-    query_tokens = [t for t in query_clean.split() if len(t) > 0]
-    if query_tokens:
-        cond_all_tokens = pd.Series(True, index=df_ar.index)
-        for token in query_tokens:
-            cond_all_tokens = cond_all_tokens & combined_text.str.contains(re.escape(token), regex=True, na=False)
-        
-        matched = df_ar[cond_all_tokens]
-        if not matched.empty:
-            return matched
-
     nama_resmi = resolve_target_name_fast(query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules)
     resmi_clean = bersihkan_teks(nama_resmi)
+    is_ml_mapped = (resmi_clean and resmi_clean != query_clean)
 
-    if resmi_clean and resmi_clean != query_clean:
+    if is_ml_mapped:
         resmi_tokens = [t for t in resmi_clean.split() if len(t) > 0]
         if resmi_tokens:
-            cond_resmi = pd.Series(True, index=df_ar.index)
+            cond_resmi_exact = pd.Series(True, index=df_ar.index)
             for token in resmi_tokens:
-                cond_resmi = cond_resmi & combined_text.str.contains(re.escape(token), regex=True, na=False)
+                pattern_exact = rf"\b{re.escape(token)}\b"
+                cond_resmi_exact = cond_resmi_exact & combined_text.str.contains(pattern_exact, regex=True, na=False)
             
-            matched = df_ar[cond_resmi]
-            if not matched.empty:
-                return matched
+            matched_resmi_exact = df_ar[cond_resmi_exact]
+            if not matched_resmi_exact.empty:
+                return matched_resmi_exact
+
+            names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
+            best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.WRatio, score_cutoff=85.0)
+            if not best_match_resmi:
+                best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=85.0)
+            
+            if best_match_resmi:
+                return df_ar[df_ar['Nama Pelanggan'] == best_match_resmi[0]]
+
+        return pd.DataFrame()
+
+    query_tokens = [t for t in query_clean.split() if len(t) > 0]
+    if query_tokens:
+        cond_exact_tokens = pd.Series(True, index=df_ar.index)
+        for token in query_tokens:
+            pattern_exact = rf"\b{re.escape(token)}\b"
+            cond_exact_tokens = cond_exact_tokens & combined_text.str.contains(pattern_exact, regex=True, na=False)
+        
+        matched_exact = df_ar[cond_exact_tokens]
+        if not matched_exact.empty:
+            return matched_exact
 
     names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
-    
-    best_match = process.extractOne(query_clean, names_list, scorer=fuzz.WRatio, score_cutoff=80.0)
+    best_match = process.extractOne(query_clean, names_list, scorer=fuzz.WRatio, score_cutoff=85.0)
     if not best_match:
-        best_match = process.extractOne(query_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
+        best_match = process.extractOne(query_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=85.0)
 
     if best_match:
         return df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
-
-    if resmi_clean:
-        best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.WRatio, score_cutoff=80.0)
-        if not best_match_resmi:
-            best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=70.0)
-        if best_match_resmi:
-            return df_ar[df_ar['Nama Pelanggan'] == best_match_resmi[0]]
 
     return pd.DataFrame()
 
@@ -475,6 +480,8 @@ def generate_ar_image(df_filtered, filter_jt=False, is_depo=False):
     fig, ax = plt.subplots(figsize=(width_inches, height_inches))
     ax.axis('off')
 
+    navy_color = (0.0, 0.125, 0.376)
+
     table = ax.table(
         cellText=df_final_display.values, 
         colLabels=df_final_display.columns, 
@@ -487,12 +494,12 @@ def generate_ar_image(df_filtered, filter_jt=False, is_depo=False):
 
     for (row_idx, col_idx), cell in table.get_celld().items():
         if row_idx == 0:
-            cell.set_facecolor('#002060')
+            cell.set_facecolor(navy_color)
             cell.set_text_props(color='white', weight='bold', verticalalignment='center')
         else:
             cell.set_text_props(verticalalignment='center')
 
-    plt.figtext(0.5, 0.94, COMPANY_NAME, ha="center", va="bottom", fontsize=15, fontweight='bold', color='#002060')
+    plt.figtext(0.5, 0.94, COMPANY_NAME, ha="center", va="bottom", fontsize=15, fontweight='bold', color=navy_color)
 
     summary_title = f"Total Nilai Faktur: Rp {total_nilai:,.0f}  |  Total Sisa Piutang: Rp {total_sisa:,.0f}".replace(",", ".")
     if not filter_jt:
@@ -500,7 +507,7 @@ def generate_ar_image(df_filtered, filter_jt=False, is_depo=False):
     elif filter_jt:
         summary_title += f"  |  Total Jatuh Tempo (JT): Rp {total_sisa:,.0f}".replace(",", ".")
 
-    plt.figtext(0.5, 0.04, summary_title, ha="center", va="top", fontsize=11, fontweight='bold', color='#002060')
+    plt.figtext(0.5, 0.04, summary_title, ha="center", va="top", fontsize=11, fontweight='bold', color=navy_color)
 
     img_buffer = io.BytesIO()
     plt.savefig(img_buffer, format='png', bbox_inches='tight', pad_inches=0.2, dpi=target_dpi)
