@@ -2,7 +2,7 @@
 
 > **Query data piutang AR kapanpun, dari mana saja — cukup ketik nama atau kode pelanggan di Telegram, bot mengirim laporan bergambar dalam hitungan detik**
 
-Bot Telegram interaktif yang membaca data AR dari `ARVIEWER.xlsm`, memuat seluruh data ke RAM saat startup, dan merespons permintaan anggota tim secara real-time. Pengguna mengetikkan nama pelanggan atau kode pelanggan — bot memandu melalui tiga langkah filter interaktif (Produk → Jatuh Tempo → FRAUD) dan mengirimkan tabel laporan piutang sebagai gambar PNG lengkap dengan status pembayaran per faktur (hanya di aktifkan oleh admin dan untuk produk tertentu (default: off).
+Bot Telegram interaktif yang membaca data AR dari `ARVIEWER.xlsm`, memuat seluruh data ke RAM saat startup, dan merespons permintaan anggota tim secara real-time. Pengguna mengetikkan nama pelanggan atau kode pelanggan — bot memandu melalui tiga langkah filter interaktif (Produk → Jatuh Tempo → FRAUD) dan mengirimkan tabel laporan piutang sebagai gambar PNG lengkap.
 
 ---
 
@@ -36,7 +36,7 @@ Data diambil dari ekosistem yang sama dengan proyek-proyek lain dalam seri ini: 
 |---|---|
 | **Antarmuka** | Chat Telegram (teks masuk, gambar keluar) |
 | **Akses** | Dilindungi `secret_key` — harus autentikasi sebelum bisa query |
-| **Sumber data** | `ARVIEWER.xlsm` (Source, Nama Pelanggan SS, Pembayaran SS) |
+| **Sumber data** | `ARVIEWER.xlsm` (Source, Nama Pelanggan SS |
 | **Resolusi nama** | 6-lapis: branch rules → fb_dict → ml_dict → fuzzy ML → fuzzy FB → fallback |
 | **Output** | Gambar PNG tabel matplotlib dikirim langsung ke chat |
 | **Refresh data** | Background thread otomatis setiap N menit |
@@ -50,7 +50,6 @@ Data diambil dari ekosistem yang sama dengan proyek-proyek lain dalam seri ini: 
 - **Multi-jenis query** — Mendukung tiga tipe input dalam satu antarmuka: kode pelanggan, nama pelanggan/kontak, dan kata kunci grup.
 - **Multi-kode via `&`** — Satu query seperti `YY-2223 & YY-2224` menampilkan piutang dari dua kode pelanggan sekaligus.
 - **Branch rules** — Mapping khusus untuk nama yang memiliki cabang berbeda: query yang mengandung kombinasi kata kunci tertentu diarahkan ke nama kanonik yang tepat (misalnya `sumo godong` vs `sumo purwodadi`).
-- **Status pembayaran per faktur** — Setiap baris faktur diberi warna berdasarkan data dari sheet `Pembayaran SS`: biru (LUNAS), oranye (DICICIL), magenta (LEBIH BAYAR), hitam (belum ada data).
 - **Gambar tabel berkualitas tinggi** — Tabel dirender via matplotlib dengan header biru gelap, pemisah bulan antar-kelompok faktur, format IDR, dan footer ringkasan total.
 - **RAM preload + background refresh** — Seluruh data dimuat ke memori global saat startup; thread daemon memperbarui data secara periodik tanpa menghentikan bot.
 - **Pengiriman fallback ke dokumen** — Jika gambar terlalu besar untuk dikirim sebagai foto, bot otomatis mengirim sebagai dokumen PNG.
@@ -107,7 +106,6 @@ pip install pandas openpyxl pyTelegramBotAPI matplotlib numpy rapidfuzz
 |---|---|---|
 | `ARClean_temp.xlsx` | ARVIEWER sheet `arvi_ar_sheet` | Data AR per faktur (sumber utama query) |
 | `FBackCust_temp.xlsx` | ARVIEWER sheet `arvi_name_out` | Master nama pelanggan (lookup nama) |
-| `PaySS_temp.xlsx` | ARVIEWER sheet `arvi_pay_sales` | Data pembayaran per faktur |
 | `Hasil_Latihan_temp.xlsx` | File ML (path `ml_trainning`) | Hasil pelatihan model resolusi nama |
 
 ---
@@ -137,7 +135,6 @@ bot_token = 123456789:ABCdef...  ; Token dari BotFather
 arvi = C:\path\ke\ARVIEWER.xlsm   ; Path absolut ke ARVIEWER.xlsm
 arvi_ar_sheet = Source             ; Nama sheet AR di ARVIEWER
 arvi_name_out = Nama Pelanggan SS  ; Nama sheet master nama
-arvi_pay_sales = Pembayaran SS     ; Nama sheet pembayaran
 ml_trainning = C:\path\ke\Hasil_Latihan_temp.xlsx  ; Path hasil training ML
 ```
 
@@ -166,7 +163,6 @@ Bot akan:
 --> Memulai eksekusi: 1_CopyData.py
 --> Sheet 'Source' berhasil diekstrak ke 'ARClean_temp.xlsx'!
 --> Sheet 'Nama Pelanggan SS' berhasil diekstrak ke 'FBackCust_temp.xlsx'!
---> Sheet 'Pembayaran SS' berhasil diekstrak ke 'PaySS_temp.xlsx'!
 --> File ML berhasil disalin ke 'Hasil_Latihan_temp.xlsx'!
 --> Selesai: 1_CopyData.py
 
@@ -321,7 +317,6 @@ Mengekstrak empat sumber data dari `ARVIEWER.xlsm` ke folder `Dapur/`:
 |---|---|---|
 | `ARClean_temp.xlsx` | Auto-detect header (keyword scan) | Data AR lengkap per faktur |
 | `FBackCust_temp.xlsx` | `skiprows=1` | Master nama pelanggan, kolom KETERANGAN & NAMA |
-| `PaySS_temp.xlsx` | `sheet_name=arvi_pay_sales` | Data pembayaran, header di baris ke-2 (`header=1`) |
 | `Hasil_Latihan_temp.xlsx` | `shutil.copyfile` | Salinan hasil training ML |
 
 ---
@@ -372,7 +367,6 @@ bot_token = 123456789:ABCdefGHIjklMNO...
 arvi = E:\ADM IRC AND ZN\ARVIEWER.xlsm
 arvi_ar_sheet = Source
 arvi_name_out = Nama Pelanggan SS
-arvi_pay_sales = Pembayaran SS
 ml_trainning = E:\ADM IRC AND ZN\AR Pusat Machine Learning\ML\Hasil_Latihan_temp.xlsx
 ```
 
@@ -381,7 +375,6 @@ ml_trainning = E:\ADM IRC AND ZN\AR Pusat Machine Learning\ML\Hasil_Latihan_temp
 | `arvi` | Path absolut ke `ARVIEWER.xlsm` |
 | `arvi_ar_sheet` | Sheet AR per faktur (sumber data utama) |
 | `arvi_name_out` | Sheet master nama pelanggan (kolom `KETERANGAN` dan `NAMA`) |
-| `arvi_pay_sales` | Sheet rekap pembayaran (header di baris ke-2) |
 | `ml_trainning` | Path ke `Hasil_Latihan_temp.xlsx` dari proyek ML |
 
 ---
@@ -491,7 +484,7 @@ Bot mengirim gambar PNG tabel laporan dengan elemen-elemen berikut:
 
 ### Header Gambar
 ```
-PT PRIMA TUNGGAL MANDIRI
+PT ABC
 ```
 Nama perusahaan ditampilkan di bagian atas gambar (hardcoded — ubah di `generate_ar_image()` jika perlu).
 
