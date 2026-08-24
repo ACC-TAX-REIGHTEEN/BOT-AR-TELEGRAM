@@ -591,4 +591,4 @@ Proyek ini dikembangkan untuk keperluan internal internal perusahaan. Silakan se
 
 ---
 
-*Dikembangkan oleh [ACC-TAX-REIGHTEEN](https://github.com/ACC-TAX-REIGHTEEN)*REIGHTEEN)*
+* Dikembangkan oleh [ACC-TAX-REIGHTEEN](https://github.com/ACC-TAX-REIGHTEEN)
