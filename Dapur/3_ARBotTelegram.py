@@ -177,7 +177,7 @@ def load_minifs_mapping(minifs_file='Minifs_temp.xlsx'):
                 if m_val:
                     min_to_group[m_val].add(m_val)
                 if n_val:
-                    min_to_group[m_val].add(n_val)
+                    min_to_group[n_val].add(n_val)
 
             for m_val, group_set in min_to_group.items():
                 for code_item in group_set:
