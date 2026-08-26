@@ -690,7 +690,17 @@ def process_fraud_filter(call):
     if not include_fraud and 'Nama Penjual' in df_data.columns:
         df_data = df_data[~df_data['Nama Penjual'].astype(str).str.contains('FRAUD', case=False, na=False)]
 
-    bot.edit_message_text("Mengolah tabel dan meng-generate gambar laporan...", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    try:
+        bot.edit_message_text(
+            "Mengolah tabel dan meng-generate gambar laporan...", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id
+        )
+    except ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            pass 
+        else:
+            raise e
 
     img_buffer = generate_ar_image(df_data, filter_jt=is_jt, is_depo=(prod == 'DEPO'))
 
