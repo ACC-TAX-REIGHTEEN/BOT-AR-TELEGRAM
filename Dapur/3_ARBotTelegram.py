@@ -13,6 +13,7 @@ import pandas as pd
 from rapidfuzz import fuzz, process
 import telebot
 from telebot import types
+from telebot.apihelper import ApiTelegramException
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -749,7 +750,13 @@ if __name__ == '__main__':
     while True:
         try:
             bot.infinity_polling(timeout=90, long_polling_timeout=30)
+        except ApiTelegramException as err:
+            if err.error_code in [502, 504]:
+                print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [SERVER TELEGRAM SIBUK]: Error {err.error_code} ({err.description}). Menunggu 10 detik...")
+                time.sleep(10)
+            else:
+                print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [API ERROR]: {err}")
+                time.sleep(5)
         except Exception as err:
             print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [KONEKSI TERPUTUS]: {err}")
-            print("--> Coba menghubungkan ulang ke server Telegram dalam 5 detik...")
             time.sleep(5)
