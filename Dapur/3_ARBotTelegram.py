@@ -177,7 +177,7 @@ def load_minifs_mapping(minifs_file='Minifs_temp.xlsx'):
                 if m_val:
                     min_to_group[m_val].add(m_val)
                 if n_val:
-                    min_to_group[n_val].add(n_val)
+                    min_to_group[m_val].add(n_val)
 
             for m_val, group_set in min_to_group.items():
                 for code_item in group_set:
@@ -291,26 +291,61 @@ def cari_data_pelanggan(df_ar, query, ml_dict, ml_list, fb_dict, fb_list, cache_
     is_ml_mapped = (resmi_clean and resmi_clean != query_clean)
 
     if is_ml_mapped:
+        matched_pelanggan = df_ar[pelanggan_clean == resmi_clean]
+        if not matched_pelanggan.empty:
+            return matched_pelanggan
+
         resmi_tokens = [t for t in resmi_clean.split() if len(t) > 0]
         if resmi_tokens:
             cond_resmi_exact = pd.Series(True, index=df_ar.index)
             for token in resmi_tokens:
                 pattern_exact = rf"\b{re.escape(token)}\b"
                 cond_resmi_exact = cond_resmi_exact & combined_text.str.contains(pattern_exact, regex=True, na=False)
-            
+
             matched_resmi_exact = df_ar[cond_resmi_exact]
             if not matched_resmi_exact.empty:
+                query_tokens = [t for t in query_clean.split() if len(t) > 0]
+                cond_query_in_resmi = pd.Series(True, index=matched_resmi_exact.index)
+                for q_token in query_tokens:
+                    pattern_q = rf"\b{re.escape(q_token)}\b"
+                    cond_query_in_resmi = cond_query_in_resmi & matched_resmi_exact['Nama Kontak'].astype(str).apply(bersihkan_teks).str.contains(pattern_q, regex=True, na=False)
+
+                sub_matched = matched_resmi_exact[cond_query_in_resmi]
+                if not sub_matched.empty:
+                    return sub_matched
+
                 return matched_resmi_exact
 
             names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
             best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.WRatio, score_cutoff=85.0)
             if not best_match_resmi:
                 best_match_resmi = process.extractOne(resmi_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=85.0)
-            
+
             if best_match_resmi:
                 return df_ar[df_ar['Nama Pelanggan'] == best_match_resmi[0]]
 
         return pd.DataFrame()
+
+    query_tokens = [t for t in query_clean.split() if len(t) > 0]
+    if query_tokens:
+        cond_exact_tokens = pd.Series(True, index=df_ar.index)
+        for token in query_tokens:
+            pattern_exact = rf"\b{re.escape(token)}\b"
+            cond_exact_tokens = cond_exact_tokens & combined_text.str.contains(pattern_exact, regex=True, na=False)
+
+        matched_exact = df_ar[cond_exact_tokens]
+        if not matched_exact.empty:
+            return matched_exact
+
+    names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
+    best_match = process.extractOne(query_clean, names_list, scorer=fuzz.WRatio, score_cutoff=85.0)
+    if not best_match:
+        best_match = process.extractOne(query_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=85.0)
+
+    if best_match:
+        return df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
+
+    return pd.DataFrame()
 
     query_tokens = [t for t in query_clean.split() if len(t) > 0]
     if query_tokens:
