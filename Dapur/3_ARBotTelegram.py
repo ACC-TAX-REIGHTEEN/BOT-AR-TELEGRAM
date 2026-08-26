@@ -178,7 +178,7 @@ def load_minifs_mapping(minifs_file='Minifs_temp.xlsx'):
                 if m_val:
                     min_to_group[m_val].add(m_val)
                 if n_val:
-                    min_to_group[n_val].add(n_val)
+                    min_to_group[m_val].add(n_val)
 
             for m_val, group_set in min_to_group.items():
                 for code_item in group_set:
@@ -287,6 +287,10 @@ def cari_data_pelanggan(df_ar, query, ml_dict, ml_list, fb_dict, fb_list, cache_
 
     combined_text = pelanggan_clean + " " + kontak_clean + " " + penjual_clean
 
+    matched_exact_pelanggan = df_ar[pelanggan_clean == query_clean]
+    if not matched_exact_pelanggan.empty:
+        return matched_exact_pelanggan
+
     nama_resmi = resolve_target_name_fast(query, ml_dict, ml_list, fb_dict, fb_list, cache_resolver, branch_rules)
     resmi_clean = bersihkan_teks(nama_resmi)
     is_ml_mapped = (resmi_clean and resmi_clean != query_clean)
@@ -334,27 +338,6 @@ def cari_data_pelanggan(df_ar, query, ml_dict, ml_list, fb_dict, fb_list, cache_
             pattern_exact = rf"\b{re.escape(token)}\b"
             cond_exact_tokens = cond_exact_tokens & combined_text.str.contains(pattern_exact, regex=True, na=False)
 
-        matched_exact = df_ar[cond_exact_tokens]
-        if not matched_exact.empty:
-            return matched_exact
-
-    names_list = df_ar['Nama Pelanggan'].dropna().unique().tolist()
-    best_match = process.extractOne(query_clean, names_list, scorer=fuzz.WRatio, score_cutoff=85.0)
-    if not best_match:
-        best_match = process.extractOne(query_clean, names_list, scorer=fuzz.token_set_ratio, score_cutoff=85.0)
-
-    if best_match:
-        return df_ar[df_ar['Nama Pelanggan'] == best_match[0]]
-
-    return pd.DataFrame()
-
-    query_tokens = [t for t in query_clean.split() if len(t) > 0]
-    if query_tokens:
-        cond_exact_tokens = pd.Series(True, index=df_ar.index)
-        for token in query_tokens:
-            pattern_exact = rf"\b{re.escape(token)}\b"
-            cond_exact_tokens = cond_exact_tokens & combined_text.str.contains(pattern_exact, regex=True, na=False)
-        
         matched_exact = df_ar[cond_exact_tokens]
         if not matched_exact.empty:
             return matched_exact
