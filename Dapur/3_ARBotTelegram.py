@@ -630,7 +630,7 @@ def handle_incoming_messages(message):
         types.InlineKeyboardButton("SEMUA", callback_data="prod_ALL")
     )
 
-    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/3: Pilih Filter Produk / Mode:", reply_markup=markup)
+    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/4: Pilih Filter Produk / Mode:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prod_'))
 def process_product_filter(call):
@@ -648,7 +648,7 @@ def process_product_filter(call):
         types.InlineKeyboardButton("SEMUA DATA", callback_data="jt_NO")
     )
 
-    bot.edit_message_text("Langkah 2/3: Pilih Filter Jatuh Tempo (JT):", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    bot.edit_message_text("Langkah 2/4: Pilih Filter Jatuh Tempo (JT):", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('jt_'))
 def process_jt_filter(call):
@@ -666,7 +666,7 @@ def process_jt_filter(call):
         types.InlineKeyboardButton("SERTAKAN FRAUD", callback_data="fraud_YES")
     )
 
-    bot.edit_message_text("Langkah 3/3: Sertakan data Sales FRAUD?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    bot.edit_message_text("Langkah 3/4: Sertakan data Sales FRAUD?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('fraud_'))
 def process_fraud_filter(call):
@@ -675,12 +675,31 @@ def process_fraud_filter(call):
         if user_id not in user_sessions:
             bot.answer_callback_query(call.id, "Sesi berakhir. Silakan cari ulang.")
             return
+        include_fraud = call.data == "fraud_YES"
+        user_sessions[user_id]['include_fraud'] = include_fraud
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("TERMASUK TGL JT", callback_data="tgljt_YES"),
+        types.InlineKeyboardButton("TANPA TANGGAL JT", callback_data="tgljt_NO")
+    )
+
+    bot.edit_message_text("Langkah 4/4: Tampilkan atau Hapus data Tanggal JT?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('tgljt_'))
+def process_tgljt_filter(call):
+    user_id = call.from_user.id
+    with session_lock:
+        if user_id not in user_sessions:
+            bot.answer_callback_query(call.id, "Sesi berakhir. Silakan cari ulang.")
+            return
         session = user_sessions[user_id]
 
-    include_fraud = call.data == "fraud_YES"
+    include_tgl_jt = call.data == "tgljt_YES"
     df_data = session['data'].copy()
     prod = session.get('prod', 'ALL')
     is_jt = session.get('filter_jt', False)
+    include_fraud = session.get('include_fraud', False)
 
     if prod not in ['ALL', 'DEPO']:
         cond_k = df_data['Nama Kontak'].astype(str).str.contains(prod, case=False, na=False)
@@ -689,6 +708,17 @@ def process_fraud_filter(call):
 
     if not include_fraud and 'Nama Penjual' in df_data.columns:
         df_data = df_data[~df_data['Nama Penjual'].astype(str).str.contains('FRAUD', case=False, na=False)]
+
+    if not include_tgl_jt:
+        col_jt = 'Tanggal JT' if 'Tanggal JT' in df_data.columns else ('Jatuh Tempo' if 'Jatuh Tempo' in df_data.columns else None)
+        if col_jt:
+            def is_kosong(val):
+                if pd.isna(val):
+                    return True
+                s = str(val).strip().lower()
+                return s in ['', 'nan', 'none', 'nat']
+
+            df_data = df_data[df_data[col_jt].apply(is_kosong)].reset_index(drop=True)
 
     try:
         bot.edit_message_text(
@@ -708,7 +738,8 @@ def process_fraud_filter(call):
         caption_msg = (
             f"Laporan Piutang ({prod})\n"
             f"• Status JT: {'Hanya JT (>0 hari)' if is_jt else 'Semua Faktur'}\n"
-            f"• Sales FRAUD: {'Disertakan' if include_fraud else 'Dibuang (Tanpa Fraud)'}"
+            f"• Sales FRAUD: {'Disertakan' if include_fraud else 'Dibuang (Tanpa Fraud)'}\n"
+            f"• Tanggal JT: {'Disertakan (Semua Data)' if include_tgl_jt else 'Dibuang (Tanpa Tanggal JT)'}"
         )
         try:
             bot.send_photo(call.message.chat.id, img_buffer, caption=caption_msg)
