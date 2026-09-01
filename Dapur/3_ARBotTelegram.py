@@ -648,7 +648,18 @@ def process_product_filter(call):
         types.InlineKeyboardButton("SEMUA DATA", callback_data="jt_NO")
     )
 
-    bot.edit_message_text("Langkah 2/4: Pilih Filter Jatuh Tempo (JT):", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    try:
+        bot.edit_message_text(
+            "Langkah 2/4: Pilih Filter Jatuh Tempo (JT):", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id, 
+            reply_markup=markup
+        )
+    except ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            raise e
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('jt_'))
 def process_jt_filter(call):
@@ -666,7 +677,18 @@ def process_jt_filter(call):
         types.InlineKeyboardButton("SERTAKAN FRAUD", callback_data="fraud_YES")
     )
 
-    bot.edit_message_text("Langkah 3/4: Sertakan data Sales FRAUD?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    try:
+        bot.edit_message_text(
+            "Langkah 3/4: Sertakan data Sales FRAUD?", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id, 
+            reply_markup=markup
+        )
+    except ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            raise e
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('fraud_'))
 def process_fraud_filter(call):
@@ -684,7 +706,18 @@ def process_fraud_filter(call):
         types.InlineKeyboardButton("TANPA TANGGAL JT", callback_data="tgljt_NO")
     )
 
-    bot.edit_message_text("Langkah 4/4: Tampilkan atau Hapus data Tanggal JT?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    try:
+        bot.edit_message_text(
+            "Langkah 4/4: Tampilkan atau Hapus data Tanggal JT?", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id, 
+            reply_markup=markup
+        )
+    except ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            raise e
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tgljt_'))
 def process_tgljt_filter(call):
@@ -722,7 +755,7 @@ def process_tgljt_filter(call):
 
     try:
         bot.edit_message_text(
-            "Mengolah tabel dan meng-generate gambar laporan...", 
+            "Mengolah tabel dan membuat gambar laporan...", 
             chat_id=call.message.chat.id, 
             message_id=call.message.message_id
         )
