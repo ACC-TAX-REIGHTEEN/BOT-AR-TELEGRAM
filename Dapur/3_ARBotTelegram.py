@@ -1,5 +1,6 @@
 import configparser
 import io
+import logging
 import os
 import re
 import threading
@@ -11,12 +12,16 @@ import matplotlib
 import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
+import requests
+from requests.exceptions import ConnectionError, ReadTimeout
 import telebot
 from telebot import types
 from telebot.apihelper import ApiTelegramException
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+telebot.logger.setLevel(logging.CRITICAL)
 
 session_lock = threading.Lock()
 data_lock = threading.Lock()
@@ -806,7 +811,7 @@ if __name__ == '__main__':
 
     while True:
         try:
-            bot.infinity_polling(timeout=90, long_polling_timeout=30)
+            bot.infinity_polling(timeout=20, long_polling_timeout=15)
         except ApiTelegramException as err:
             if err.error_code in [502, 504]:
                 print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [SERVER TELEGRAM SIBUK]: Error {err.error_code} ({err.description}). Menunggu 10 detik...")
@@ -814,6 +819,9 @@ if __name__ == '__main__':
             else:
                 print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [API ERROR]: {err}")
                 time.sleep(5)
+        except (ConnectionError, ReadTimeout, ConnectionResetError, OSError) as err:
+            print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [KONEKSI TERPUTUS/RESET]: Jaringan terputus sesaat ({err}). Mencoba menghubungkan kembali dalam 5 detik...")
+            time.sleep(5)
         except Exception as err:
-            print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [KONEKSI TERPUTUS]: {err}")
+            print(f"--> [{datetime.now().strftime('%H:%M:%S')}] [ERROR UNKNOWN]: {err}")
             time.sleep(5)
