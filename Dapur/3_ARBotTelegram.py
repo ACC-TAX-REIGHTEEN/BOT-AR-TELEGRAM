@@ -147,6 +147,16 @@ def parse_date_sort(val):
             break
     return pd.to_datetime(val_str, errors="coerce", format="mixed")
 
+def parse_user_input_date(val_str):
+    val_str = val_str.strip().replace('-', '/').replace('.', '/')
+    formats_to_try = ["%d/%m/%y", "%d/%m/%Y"]
+    for fmt in formats_to_try:
+        try:
+            return datetime.strptime(val_str, fmt)
+        except ValueError:
+            pass
+    return None
+
 def load_minifs_mapping(minifs_file='Minifs_temp.xlsx'):
     code_to_all_codes = defaultdict(set)
     if not os.path.exists(minifs_file):
@@ -804,7 +814,7 @@ def process_tgljt_filter(call):
     for idx, opt in enumerate(date_options):
         buttons.append(types.InlineKeyboardButton(opt['label'], callback_data=f"tglfak_{idx}"))
 
-    buttons.append(types.InlineKeyboardButton("SEMUA", callback_data="tglfak_ALL"))
+    buttons.append(types.InlineKeyboardButton("KUSTOM", callback_data="tglfak_CUSTOM"))
     markup.add(*buttons)
 
     try:
@@ -830,6 +840,16 @@ def process_tglfaktur_filter(call):
         session = user_sessions[user_id]
 
     selected_code = call.data.split('_')[1]
+
+    if selected_code == "CUSTOM":
+        msg = bot.send_message(
+            call.message.chat.id,
+            "Masukkan **Tanggal Mulai (DARI)** dengan format `DD/MM/YY` (contoh: `21/08/26`):",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_custom_end_date, user_id)
+        return
+
     df_data = session['data'].copy()
     prod = session.get('prod', 'ALL')
     is_jt = session.get('filter_jt', False)
@@ -857,7 +877,7 @@ def process_tglfaktur_filter(call):
             df_data = df_data[df_data[col_jt].apply(is_kosong)].reset_index(drop=True)
 
     selected_date_label = "Semua Tanggal"
-    if selected_code != 'ALL' and selected_code.isdigit():
+    if selected_code.isdigit():
         idx = int(selected_code)
         if idx < len(date_options):
             opt = date_options[idx]
@@ -901,6 +921,100 @@ def process_tglfaktur_filter(call):
             bot.send_document(call.message.chat.id, img_buffer, caption=caption_msg)
     else:
         bot.send_message(call.message.chat.id, "Tidak ada data piutang setelah disaring.")
+
+def ask_custom_end_date(message, user_id):
+    start_str = message.text.strip()
+    dt_start = parse_user_input_date(start_str)
+
+    if not dt_start:
+        msg = bot.reply_to(
+            message,
+            "Format tanggal salah! Gunakan format `DD/MM/YY` (contoh: `21/08/26`).\n\nSilakan masukkan **Tanggal Mulai (DARI)** lagi:",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_custom_end_date, user_id)
+        return
+
+    msg = bot.reply_to(
+        message,
+        f"Tanggal Mulai: **{dt_start.strftime('%d/%m/%Y')}**\n\nSekarang masukkan **Tanggal Akhir (KE)** dengan format `DD/MM/YY` (contoh: `11/09/26`):",
+        parse_mode="Markdown"
+    )
+    bot.register_next_step_handler(msg, process_custom_date_filtering, user_id, dt_start)
+
+def process_custom_date_filtering(message, user_id, dt_start):
+    end_str = message.text.strip()
+    dt_end = parse_user_input_date(end_str)
+
+    if not dt_end:
+        msg = bot.reply_to(
+            message,
+            "Format tanggal salah! Gunakan format `DD/MM/YY` (contoh: `11/09/26`).\n\nSilakan masukkan **Tanggal Akhir (KE)** lagi:",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, process_custom_date_filtering, user_id, dt_start)
+        return
+
+    if dt_start > dt_end:
+        dt_start, dt_end = dt_end, dt_start
+
+    with session_lock:
+        if user_id not in user_sessions:
+            bot.reply_to(message, "Sesi berakhir. Silakan cari ulang.")
+            return
+        session = user_sessions[user_id]
+
+    df_data = session['data'].copy()
+    prod = session.get('prod', 'ALL')
+    is_jt = session.get('filter_jt', False)
+    include_fraud = session.get('include_fraud', False)
+    include_tgl_jt = session.get('include_tgl_jt', False)
+
+    if prod not in ['ALL', 'DEPO']:
+        cond_k = df_data['Nama Kontak'].astype(str).str.contains(prod, case=False, na=False)
+        cond_p = df_data['Nama Penjual'].astype(str).str.contains(prod, case=False, na=False)
+        df_data = df_data[cond_k | cond_p]
+
+    if not include_fraud and 'Nama Penjual' in df_data.columns:
+        df_data = df_data[~df_data['Nama Penjual'].astype(str).str.contains('FRAUD', case=False, na=False)]
+
+    if not include_tgl_jt:
+        col_jt = 'Tanggal JT' if 'Tanggal JT' in df_data.columns else ('Jatuh Tempo' if 'Jatuh Tempo' in df_data.columns else None)
+        if col_jt:
+            def is_kosong(val):
+                if pd.isna(val):
+                    return True
+                s = str(val).strip().lower()
+                return s in ['', 'nan', 'none', 'nat']
+
+            df_data = df_data[df_data[col_jt].apply(is_kosong)].reset_index(drop=True)
+
+    if 'Tgl Faktur' in df_data.columns:
+        tgl_dt_series = df_data['Tgl Faktur'].apply(parse_date_sort)
+        mask = (tgl_dt_series >= dt_start) & (tgl_dt_series <= dt_end)
+        df_data = df_data[mask].reset_index(drop=True)
+
+    selected_date_label = f"{dt_start.strftime('%d/%m/%Y')} s/d {dt_end.strftime('%d/%m/%Y')}"
+
+    bot.send_message(message.chat.id, "Mengolah tabel dan membuat gambar laporan...")
+    img_buffer = generate_ar_image(df_data, filter_jt=is_jt, is_depo=(prod == 'DEPO'))
+
+    if img_buffer:
+        caption_msg = (
+            f"Laporan Piutang ({prod})\n"
+            f"• Status JT: {'Hanya JT (>0 hari)' if is_jt else 'Semua Faktur'}\n"
+            f"• Sales FRAUD: {'Disertakan' if include_fraud else 'Dibuang (Tanpa Fraud)'}\n"
+            f"• Tanggal JT: {'Disertakan (Semua Data)' if include_tgl_jt else 'Dibuang (Tanpa Tanggal JT)'}\n"
+            f"• Tgl Faktur: {selected_date_label}"
+        )
+        try:
+            bot.send_photo(message.chat.id, img_buffer, caption=caption_msg)
+        except Exception as e_send:
+            img_buffer.seek(0)
+            img_buffer.name = f"Laporan_Piutang_{prod}.png"
+            bot.send_document(message.chat.id, img_buffer, caption=caption_msg)
+    else:
+        bot.send_message(message.chat.id, "Tidak ada data piutang setelah disaring.")
 
 if __name__ == '__main__':
     print("--> Memulai Data RAM Preloader...")
