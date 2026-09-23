@@ -635,7 +635,7 @@ def handle_incoming_messages(message):
         types.InlineKeyboardButton("SEMUA", callback_data="prod_ALL")
     )
 
-    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/4: Pilih Filter Produk / Mode:", reply_markup=markup)
+    bot.send_message(message.chat.id, f"Ditemukan {len(matched_df)} faktur piutang.\n\nLangkah 1/5: Pilih Filter Produk / Mode:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('prod_'))
 def process_product_filter(call):
@@ -655,7 +655,7 @@ def process_product_filter(call):
 
     try:
         bot.edit_message_text(
-            "Langkah 2/4: Pilih Filter Jatuh Tempo (JT):", 
+            "Langkah 2/5: Pilih Filter Jatuh Tempo (JT):", 
             chat_id=call.message.chat.id, 
             message_id=call.message.message_id, 
             reply_markup=markup
@@ -684,7 +684,7 @@ def process_jt_filter(call):
 
     try:
         bot.edit_message_text(
-            "Langkah 3/4: Sertakan data Sales FRAUD?", 
+            "Langkah 3/5: Sertakan data Sales FRAUD?", 
             chat_id=call.message.chat.id, 
             message_id=call.message.message_id, 
             reply_markup=markup
@@ -713,7 +713,7 @@ def process_fraud_filter(call):
 
     try:
         bot.edit_message_text(
-            "Langkah 4/4: Tampilkan atau Hapus data Tanggal JT?", 
+            "Langkah 4/5: Tampilkan atau Hapus data Tanggal JT?", 
             chat_id=call.message.chat.id, 
             message_id=call.message.message_id, 
             reply_markup=markup
@@ -734,9 +734,10 @@ def process_tgljt_filter(call):
         session = user_sessions[user_id]
 
     include_tgl_jt = call.data == "tgljt_YES"
+    session['include_tgl_jt'] = include_tgl_jt
+
     df_data = session['data'].copy()
     prod = session.get('prod', 'ALL')
-    is_jt = session.get('filter_jt', False)
     include_fraud = session.get('include_fraud', False)
 
     if prod not in ['ALL', 'DEPO']:
@@ -758,6 +759,118 @@ def process_tgljt_filter(call):
 
             df_data = df_data[df_data[col_jt].apply(is_kosong)].reset_index(drop=True)
 
+    date_options = []
+    if 'Tgl Faktur' in df_data.columns:
+        raw_dates = list(df_data['Tgl Faktur'].dropna().unique())
+        parsed_dates = []
+
+        for d in raw_dates:
+            dt = parse_date_sort(d)
+            if pd.notna(dt):
+                parsed_dates.append((dt, str(d).strip()))
+
+        parsed_dates.sort(key=lambda x: x[0])
+
+        for dt, label in parsed_dates:
+            date_options.append({
+                'label': label,
+                'type': 'single',
+                'dt_start': dt,
+                'dt_end': dt,
+                'raw_label': label
+            })
+
+        if len(parsed_dates) > 1:
+            first_dt, first_label = parsed_dates[0]
+            first_short = " ".join(first_label.split()[:2]) if len(first_label.split()) >= 2 else first_label
+
+            for dt, label in parsed_dates[1:]:
+                label_short = " ".join(label.split()[:2]) if len(label.split()) >= 2 else label
+                range_label = f"{first_short} – {label_short}"
+
+                date_options.append({
+                    'label': range_label,
+                    'type': 'range',
+                    'dt_start': first_dt,
+                    'dt_end': dt,
+                    'raw_label': range_label
+                })
+
+    with session_lock:
+        user_sessions[user_id]['date_options'] = date_options
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    for idx, opt in enumerate(date_options):
+        buttons.append(types.InlineKeyboardButton(opt['label'], callback_data=f"tglfak_{idx}"))
+
+    buttons.append(types.InlineKeyboardButton("SEMUA", callback_data="tglfak_ALL"))
+    markup.add(*buttons)
+
+    try:
+        bot.edit_message_text(
+            "Langkah 5/5: Pilih Filter Tanggal / Rentang Faktur:", 
+            chat_id=call.message.chat.id, 
+            message_id=call.message.message_id, 
+            reply_markup=markup
+        )
+    except ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            raise e
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('tglfak_'))
+def process_tglfaktur_filter(call):
+    user_id = call.from_user.id
+    with session_lock:
+        if user_id not in user_sessions:
+            bot.answer_callback_query(call.id, "Sesi berakhir. Silakan cari ulang.")
+            return
+        session = user_sessions[user_id]
+
+    selected_code = call.data.split('_')[1]
+    df_data = session['data'].copy()
+    prod = session.get('prod', 'ALL')
+    is_jt = session.get('filter_jt', False)
+    include_fraud = session.get('include_fraud', False)
+    include_tgl_jt = session.get('include_tgl_jt', False)
+    date_options = session.get('date_options', [])
+
+    if prod not in ['ALL', 'DEPO']:
+        cond_k = df_data['Nama Kontak'].astype(str).str.contains(prod, case=False, na=False)
+        cond_p = df_data['Nama Penjual'].astype(str).str.contains(prod, case=False, na=False)
+        df_data = df_data[cond_k | cond_p]
+
+    if not include_fraud and 'Nama Penjual' in df_data.columns:
+        df_data = df_data[~df_data['Nama Penjual'].astype(str).str.contains('FRAUD', case=False, na=False)]
+
+    if not include_tgl_jt:
+        col_jt = 'Tanggal JT' if 'Tanggal JT' in df_data.columns else ('Jatuh Tempo' if 'Jatuh Tempo' in df_data.columns else None)
+        if col_jt:
+            def is_kosong(val):
+                if pd.isna(val):
+                    return True
+                s = str(val).strip().lower()
+                return s in ['', 'nan', 'none', 'nat']
+
+            df_data = df_data[df_data[col_jt].apply(is_kosong)].reset_index(drop=True)
+
+    selected_date_label = "Semua Tanggal"
+    if selected_code != 'ALL' and selected_code.isdigit():
+        idx = int(selected_code)
+        if idx < len(date_options):
+            opt = date_options[idx]
+            selected_date_label = opt['label']
+
+            if 'Tgl Faktur' in df_data.columns:
+                if opt['type'] == 'single':
+                    df_data = df_data[df_data['Tgl Faktur'].astype(str).str.strip() == opt['raw_label']].reset_index(drop=True)
+                elif opt['type'] == 'range':
+                    tgl_dt_series = df_data['Tgl Faktur'].apply(parse_date_sort)
+                    mask = (tgl_dt_series >= opt['dt_start']) & (tgl_dt_series <= opt['dt_end'])
+                    df_data = df_data[mask].reset_index(drop=True)
+
     try:
         bot.edit_message_text(
             "Mengolah tabel dan membuat gambar laporan...", 
@@ -777,7 +890,8 @@ def process_tgljt_filter(call):
             f"Laporan Piutang ({prod})\n"
             f"• Status JT: {'Hanya JT (>0 hari)' if is_jt else 'Semua Faktur'}\n"
             f"• Sales FRAUD: {'Disertakan' if include_fraud else 'Dibuang (Tanpa Fraud)'}\n"
-            f"• Tanggal JT: {'Disertakan (Semua Data)' if include_tgl_jt else 'Dibuang (Tanpa Tanggal JT)'}"
+            f"• Tanggal JT: {'Disertakan (Semua Data)' if include_tgl_jt else 'Dibuang (Tanpa Tanggal JT)'}\n"
+            f"• Tgl Faktur: {selected_date_label}"
         )
         try:
             bot.send_photo(call.message.chat.id, img_buffer, caption=caption_msg)
